@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="night">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <link rel="icon" href="icon.png">
+  <link rel="stylesheet" href="styles.css?v=20260911-f9">
+  <link rel="stylesheet" href="overrides.css?v=20260911-f9">
+  <script>
+    try {
+      const theme = localStorage.getItem("jiaxing-canvas-theme");
+      document.documentElement.setAttribute("data-theme", theme === "day" ? "day" : "night");
+    } catch {
+      document.documentElement.setAttribute("data-theme", "night");
+    }
+  </script>
+</head>
+<body>
+  <header>
+    <div class="logo"><img class="logoMark" src="icon.png" alt="家兴" width="42" height="42"><span>家兴豆包无限画布<small>公司测试 09-10</small></span></div>
+    <div class="themeSwitch" role="group" aria-label="画布外观">
+      <button type="button" data-set-theme="day" title="白天模式：浅色画布">白天</button>
+      <button type="button" data-set-theme="night" title="夜晚模式：深色画布">夜晚</button>
+    </div>
+    <div class="workspaceBar">
+      <span>豆包账号</span>
+      <select id="profileSelect" aria-label="图片和视频生成使用的豆包账号"></select>
+      <select id="generationChannel" aria-label="视频生成通道" title="选择原生豆包客户端或内置多账号浏览器"><option value="native">原生豆包</option><option value="browser">内置多账号</option></select>
+      <button id="syncProfiles" title="读取官方豆包账号切换列表">同步账号</button>
+      <button id="openProfile" title="在当前唯一豆包窗口切换到所选账号">切换豆包</button>
+      <button id="manageProfiles" title="管理画布中的豆包账号绑定">管理</button>
+      <button id="noWatermarkToggle" title="只捕获豆包已返回的原始媒体，不改变原生生成和回填流程">无水印：检查中</button>
+      <button id="openNoWatermarkFolder" title="打开画布数据目录中的无水印素材文件夹">无水印素材</button>
+      <i id="profileState">首次使用：先登录豆包，再同步账号</i>
+    </div>
+    <div class="hint"><span id="licenseBadge">检查授权</span></div>
+      <button id="updateAppBtn" type="button" title="检查并安装最新版，不会删除画布和任务数据">检查更新</button>
+      <button id="browserAccountsBtn" type="button" title="打开全部账号的独立浏览器，关掉某一个后再点这里会重新全部打开">打开全部窗口</button>
+    <button id="warmupBrowserWorkersBtn" type="button" title="每个账号打开一个任务栏浏览器窗口，方便监控">打开全部账号窗口</button>
+    <button id="undoBtn" type="button" title="返回上一步（Ctrl+Z）" disabled>↶ 返回上一步</button>
+    <button id="pointerModeBtn" type="button" title="按住空格不放再拖鼠标可移动画布；左键框选或拖节点" aria-pressed="false">选择</button>
+    <button id="arrangeBtn" type="button" title="把画布上的节点按任务整理整齐">整理排列</button>
+    <button id="queueBtn">历史记录 <i id="jobCount">0</i></button>
+    <button id="resetUserDataBtn" type="button" title="删除画布、历史任务、内置浏览器账号和素材等全部本地数据，恢复成刚解压的纯净版">恢复纯净版</button>
+  </header>
+  <main>
+    <section id="stage">
+      <button id="helpToggle" type="button" aria-controls="sidebar" aria-expanded="false">使用帮助</button>
+      <div id="marquee" hidden></div>
+      <div id="arrangeBar" hidden>
+        <b id="arrangeCount">已选 0</b>
+        <button type="button" data-arrange="tidy">按任务整理</button>
+        <button type="button" data-arrange="grid">网格</button>
+        <button type="button" data-arrange="row">横向</button>
+        <button type="button" data-arrange="column">纵向</button>
+      </div>
+      <div id="canvas"><svg id="wires" aria-hidden="true"></svg></div>
+      <div class="canvas-tip">按住空格拖动画布 · 左键框选 · Shift 加选 · 点节点可拖动 · 滚轮缩放</div>
+    </section>
+    <aside id="sidebar" hidden aria-label="帮助与历史记录">
+      <div class="sideTitle"><span id="panelTitle">使用帮助</span><button id="closePanel" title="收起侧栏" aria-label="收起侧栏">×</button></div>
+      <div id="panel"></div>
+    </aside>
+  </main>
+  <div id="contextMenu"></div>
+  <div id="toast"></div>
+  <div id="progressCard"><span class="spinner"></span><div><b id="progressTitle">正在提交豆包</b><p id="progressText"></p></div><button id="progressClose" title="收起状态">×</button></div>
+  <div id="preview"><button>×</button><img alt="图片预览"></div>
+  <div id="licenseModal" class="modal">
+    <div class="modalCard licenseModalCard">
+      <div class="modalTitle"><b>激活正版</b></div>
+      <p>把购买时给你的卡密填在下面。一张卡只能绑定一台电脑，换机请联系售后人员解绑。</p>
+      <input id="licenseKeyInput" type="text" autocomplete="off" spellcheck="false" placeholder="例如 JX-XXXX-XXXX-XXXX-XXXX" style="width:100%;box-sizing:border-box;margin:4px 0 10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;font-size:14px;">
+      <p id="licenseModalMessage" style="margin:0 0 8px;color:#c43b3b;"></p>
+      <button id="activateLicenseBtn" class="primary" type="button">激活</button>
+      <div class="wechatContact">
+        <b>没有卡密？扫码联系售后开卡</b>
+        <p>售后人员微信：<strong>无限画布</strong>。开卡、解绑、激活失败请扫码添加，不要发送密码或验证码。</p>
+        <div class="qrRow qrRowSingle">
+          <figure>
+            <img src="wechat-staff.png?v=20260911-f9" alt="售后人员无限画布微信二维码">
+            <figcaption>售后人员 · 无限画布</figcaption>
+          </figure>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="resetConfirmModal" class="modal">
+    <div class="modalCard licenseModalCard">
+      <div class="modalTitle"><b>恢复纯净版</b><button type="button" id="cancelResetConfirm" aria-label="取消">×</button></div>
+      <p>将删除本机全部画布用户数据，软件会恢复成刚解压时的状态。卡密绑定通常仍在，重新打开后若需开卡或解绑，请扫码联系售后人员。</p>
+      <div class="wechatContact">
+        <b>售后人员 · 开卡 / 解绑</b>
+        <p>微信昵称：<strong>无限画布</strong></p>
+        <div class="qrRow qrRowSingle">
+          <figure>
+            <img src="wechat-staff.png?v=20260911-f9" alt="售后人员无限画布微信二维码">
+            <figcaption>无限画布</figcaption>
+          </figure>
+        </div>
+      </div>
+      <button id="confirmResetUserDataBtn" type="button" class="danger">仍要删除并恢复纯净版</button>
+    </div>
+  </div>
+  <div id="profileModal" class="modal">
+    <div class="modalCard">
+      <div class="modalTitle"><b>豆包账号</b><button data-close-profile>×</button></div>
+      <p>账号来自你电脑上原有豆包的“切换账号”列表。画布只复用同一个官方豆包窗口，不会创建隔离窗口。</p>
+      <div id="profileList"></div>
+      <button id="syncProfilesModal" class="primary">↻ 同步豆包已登录账号</button>
+      <button id="addProfile" class="secondary">＋ 手动添加待绑定项</button>
+      <small id="dataPath"></small>
+      <p class="resetPureNote">若要把软件恢复成刚解压的纯净版，会删除本机「数据」文件夹中的全部内容（画布、历史、内置浏览器账号和登录缓存、无水印素材、设置）。官方豆包客户端不受影响。</p>
+      <button id="resetUserDataModalBtn" type="button" class="danger">删除全部用户数据，恢复纯净版</button>
+    </div>
+  </div>
+  <div id="accountPickModal" class="modal accountPickModal" aria-hidden="true">
+    <div class="modalCard">
+      <div class="modalTitle"><b>选择本次生成账号</b><button type="button" data-close-account-pick>×</button></div>
+      <p class="accountPickHint">可选<strong>自动分配</strong>到空闲 Dola 窗口并行发任务；也可指定账号。今日已用：少于 2 次绿色，2 次及以上红色。</p>
+      <div id="accountPickList"></div>
+    </div>
+  </div>
+  <div id="browserAccountsModal" class="browserAccountsModal" aria-hidden="true">
+    <section class="browserShell">
+      <header class="browserShellHeader"><div class="browserBrand"><img class="logoMark" src="icon.png" alt="家兴" width="36" height="36"><div><b>多账号内置浏览器</b><small>豆包 / Dola · 独立登录会话</small></div></div><div><label><input id="browserAutoRotate" type="checkbox" checked> 额度不足自动切换</label><button id="closeBrowserAccounts" type="button">×</button></div></header>
+      <aside class="browserAccountRail">
+        <div class="browserRailActions"><button id="addBrowserAccount" type="button">＋ 添加账号</button><button id="pasteBrowserAccounts" type="button">粘贴导入</button><label>文件导入<input id="importBrowserAccounts" type="file" accept=".txt,.json,.csv,text/plain,text/csv,application/json"></label></div>
+        <div id="browserAccountList"></div>
+      </aside>
+      <main class="browserViewport">
+        <div class="browserToolbar"><button id="browserBack" type="button">←</button><button id="browserReload" type="button">↻</button><span id="browserAddress">请选择账号</span><button id="fillBrowserCredential" type="button">填充账号</button><button id="checkBrowserQuota" type="button">检查积分/额度</button><button id="submitBrowserTask" class="browserSubmitTask" type="button" disabled>确认并提交当前任务</button><button id="addToCanvasBtn" class="browserBackfillTask" type="button">核对后回填到画布</button><button id="deleteCurrentBrowserAccount" class="browserDeleteAccount" type="button">删除当前账号和浏览器</button></div>
+        <div id="browserCanvasOrigin" class="browserCanvasOrigin"><span id="browserCanvasOriginText">当前没有画布任务。成片保存后，点右上角绿色「回填到画布」。</span></div>
+        <div id="browserWebviewHost"><div class="browserEmpty"><b>添加或选择一个账号</b><span>每个账号使用独立 Cookie 与缓存，登录状态会保存在本机。</span></div></div>
+        <div id="browserStatusBar">尚未选择账号</div>
+      </main>
+    </section>
+  </div>
+  <script>
+    (function () {
+      const key = "jiaxing-canvas-theme";
+      const apply = theme => {
+        const next = theme === "day" ? "day" : "night";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem(key, next); } catch {}
+        document.querySelectorAll("[data-set-theme]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.setTheme === next));
+        });
+      };
+      apply(document.documentElement.getAttribute("data-theme"));
+      document.querySelectorAll("[data-set-theme]").forEach(button => {
+        button.addEventListener("click", () => apply(button.dataset.setTheme));
+      });
+      window.addEventListener("storage", event => {
+        if (event.key === key) apply(event.newValue === "day" ? "day" : "night");
+      });
+    })();
+  </script>
+  <script src="app.js?v=20260911-f9"></script>
+  <script src="browser-accounts.js?v=20260911-f9"></script>
+</body>
+</html>

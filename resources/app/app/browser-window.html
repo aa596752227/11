@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="night">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <link rel="icon" href="icon.png">
+  <title>家兴多账号浏览器 · 豆包 / Dola</title>
+  <link rel="stylesheet" href="styles.css?v=20260911-f7">
+  <link rel="stylesheet" href="overrides.css?v=20260911-f7">
+  <script>
+    try {
+      const theme = localStorage.getItem("jiaxing-canvas-theme");
+      document.documentElement.setAttribute("data-theme", theme === "day" ? "day" : "night");
+    } catch {
+      document.documentElement.setAttribute("data-theme", "night");
+    }
+  </script>
+</head>
+<body class="browserStandalone">
+  <div id="browserAccountsModal" class="browserAccountsModal show" aria-hidden="false">
+    <section class="browserShell">
+      <header class="browserShellHeader"><div class="browserBrand"><img class="logoMark" src="icon.png" alt="家兴" width="36" height="36"><div><b>家兴多账号浏览器</b><small>豆包 / Dola · 无水印回填 · 30秒 / Seedance 2.5 配置注入</small></div></div><div class="browserHeaderActions"><div class="themeSwitch" role="group" aria-label="外观"><button type="button" data-set-theme="day" title="白天模式">白天</button><button type="button" data-set-theme="night" title="夜晚模式">夜晚</button></div><label><input id="browserAutoRotate" type="checkbox" checked> 额度不足自动切换</label></div></header>
+      <aside class="browserAccountRail">
+        <div class="browserRailActions"><button id="addBrowserAccount" type="button">＋ 添加账号</button><button id="pasteBrowserAccounts" type="button" title="先复制邮箱----密码，再点击导入">粘贴导入</button><label>文件导入<input id="importBrowserAccounts" type="file" accept=".txt,.json,.csv,text/plain,text/csv,application/json"></label></div>
+        <div id="browserAccountList"></div>
+      </aside>
+      <main class="browserViewport">
+        <div class="browserToolbar"><button id="browserBack" type="button">←</button><button id="browserReload" type="button">↻</button><span id="browserAddress">请选择账号</span><button id="warmupBrowserWorkersBtn" type="button">打开全部账号窗口</button><button id="fillBrowserCredential" type="button">填充账号</button><button id="checkBrowserQuota" type="button">检查积分/额度</button><button id="submitBrowserTask" class="browserSubmitTask" type="button" disabled>确认并提交当前任务</button><button id="addToCanvasBtn" class="browserBackfillTask" type="button">核对后回填到画布</button><button id="deleteCurrentBrowserAccount" class="browserDeleteAccount" type="button">删除当前账号和浏览器</button></div>
+        <div id="browserCanvasOrigin" class="browserCanvasOrigin"><span id="browserCanvasOriginText">若页面已经生成好视频，点「核对后回填到画布」选择发出节点。必须核对任务号，不会猜节点。</span></div>
+        <div id="browserWebviewHost"><div class="browserEmpty"><b>添加或选择一个账号</b><span>每个账号使用独立 Cookie 与缓存，登录状态会保存在本机。</span></div></div>
+        <div id="browserStatusBar">可删除当前账号并关闭本窗口；登录缓存会一并清除。</div>
+      </main>
+    </section>
+  </div>
+  <script>
+    (function () {
+      const key = "jiaxing-canvas-theme";
+      const apply = theme => {
+        const next = theme === "day" ? "day" : "night";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem(key, next); } catch {}
+        document.querySelectorAll("[data-set-theme]").forEach(button => {
+          button.setAttribute("aria-pressed", String(button.dataset.setTheme === next));
+        });
+      };
+      apply(document.documentElement.getAttribute("data-theme"));
+      document.querySelectorAll("[data-set-theme]").forEach(button => {
+        button.addEventListener("click", () => apply(button.dataset.setTheme));
+      });
+      window.addEventListener("storage", event => {
+        if (event.key === key) apply(event.newValue === "day" ? "day" : "night");
+      });
+    })();
+  </script>
+  <script src="browser-accounts.js?v=20260911-f7"></script>
+</body>
+</html>

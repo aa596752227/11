@@ -1,0 +1,9 @@
+{
+  "files": {
+    "password-book.js": "09b758a120d7e9f23021e1e9b78d8df0ad9f013bfd6d47d99bf0891991515a68",
+    "integrity-check.js": "f48c0a170b3bc2bef58b87b493b3e4f69833b32155627a085d1794ea5edb9c9c",
+    "license-client.js": "418289859c1a1191e1ca4f62cbcb896e2f9c5493d8358d9398c2321fec8031aa",
+    "main.js": "bd126995bce14da5cccfe5b1378605abf48c6464451cb64b072dc8d8a9ef3f0c",
+    "preload.js": "b1aa44609d9ecbb77a870c4862b3a1261ff63c5b139bfdabedbfc0c1e2947993"
+  }
+}
