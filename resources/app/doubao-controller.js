@@ -258,7 +258,7 @@ async function connectPageById(port, targetId, waitMilliseconds = 8000) {
   return null;
 }
 
-async function connectRecoveryPage(baseline, identity) {
+async function connectRecoveryPage(baseline, identity, allowRestore = true) {
   const context=baseline?.confirmationContext||baseline?.submissionContext;
   if(context&&!hasStableIdentity(context.root)&&baseline.messageState)context.previousMessages||=baseline.messageState.messages||[];
   const expectedUrl=context?.url||baseline?.url;
@@ -278,6 +278,15 @@ async function connectRecoveryPage(baseline, identity) {
       if(!sameConversationUrl(current.url,expectedUrl)||(context&&hasStableIdentity(context.root)&&!chain?.valid))throw new Error('对话或原任务消息不一致');
       verified.push(client);client=null;
     }catch(error){assertRunning();rejected.push({targetId:target.id,reason:error.message});}finally{client?.close();}
+  }
+  if(verified.length===0&&allowRestore&&!baseline.awaitingSubmissionReceipt&&context?.root?.messageId){
+    try{
+      const url=new URL(expectedUrl);
+      if(nativeConversationKey(expectedUrl)&&/^\/chat\/\d+$/.test(url.pathname)){
+        await restoreBoundResultView(baseline,identity);
+        return connectRecoveryPage(baseline,identity,false);
+      }
+    }catch(error){rejected.push({targetId:'restore',reason:error.message});}
   }
   if(verified.length!==1){verified.forEach(c=>c.close());throw controllerError('DOUBAO_RECOVERY_NOT_FOUND','暂未找到唯一的原账号、原任务对话，正在等待视图恢复；不会重新生成或领取其他任务结果',{candidateCount:candidates.length,verifiedCount:verified.length,rejected});}
   baseline.targetId=verified[0].targetId;
@@ -466,9 +475,10 @@ async function ensureMainChatPage(client, progress = () => {}, { allowWindowActi
     if(recovered?.closed){state=await accountPageState(client);if(state.accountInViewport||state.backgroundMainReady)return client;}
   } catch { assertRunning(); }
 
-  // 账号切换时主页面与快捷窗口会异步重建，先给真正的主页面一点时间出现。
+  // 冷启动或账号切换时主页面会异步重建。豆包端口通常先就绪，
+  // 真正的聊天页可能还要十几秒；轮询到页面出现即返回，不固定等待。
   try {
-    const visibleClient = await connectVisibleAccountPage(port, 5000, true);
+    const visibleClient = await connectVisibleAccountPage(port, 25000, true);
     try { client.close(); } catch {}
     return visibleClient;
   } catch {}
@@ -592,7 +602,10 @@ async function readCurrentAccount(client) {
     };
     const bottom = document.querySelector('[data-testid="sidebar_bottom"]');
     if (!bottom || !isVisible(bottom)) return null;
-    const button = [...bottom.querySelectorAll('button,[role="button"]')].find(isVisible) || bottom;
+    const buttons = [...bottom.querySelectorAll('button,[role="button"]')].filter(isVisible);
+    const button = buttons.find(element => element.querySelector('img[alt="avatar"],img'))
+      || buttons.find(element => clean(element.innerText || element.textContent))
+      || bottom;
     const lines = String(button.innerText || button.textContent || '').split(/\\n+/).map(clean).filter(Boolean);
     const image = button.querySelector('img[alt="avatar"],img') || bottom.querySelector('img[alt="avatar"],img');
     const leafTexts = [...button.querySelectorAll('div,span')].filter(isVisible).filter(element => !element.querySelector('div,span')).map(element => clean(element.innerText || element.textContent)).filter(Boolean);
@@ -636,6 +649,19 @@ const accountDomHelpers = `
     return true;
   };
   const accountMenus = () => [...document.querySelectorAll('[role="menu"]')].filter(menu => accountVisible(menu) && menu.getAttribute('data-state') === 'open' && clean(menu.innerText || menu.textContent).includes('添加账号'));
+  const accountRowForImage = (image, menu) => {
+    const imageRect = image?.getBoundingClientRect();
+    if (!imageRect || imageRect.width < 24 || imageRect.height < 24) return null;
+    for (let row = image.parentElement; row && row !== menu; row = row.parentElement) {
+      if (!accountVisible(row)) continue;
+      const rect = row.getBoundingClientRect();
+      const text = clean(row.innerText || row.textContent);
+      const images = row.querySelectorAll('img[alt="avatar"],img');
+      if (text && images.length === 1 && rect.width >= 100 && rect.height >= 40 && rect.height <= 92
+        && !/添加账号|退出登录|切换账号|设置|帮助与反馈|额度状态/.test(text)) return row;
+    }
+    return null;
+  };
   const profileAccountMenu = () => [...document.querySelectorAll('[data-testid="chat_header_menu"],[role="menu"]')].find(menu => accountVisible(menu) && menu.getAttribute('data-state') === 'open' && [...menu.querySelectorAll('[role="menuitem"],button,[role="button"],div')].some(item => accountVisible(item) && clean(item.innerText || item.textContent) === '切换账号'));
 `;
 
@@ -650,7 +676,9 @@ async function openAccountSwitcher(client, attempt = 0) {
     const menu = profileAccountMenu();
     if (!menu) {
       const bottom = document.querySelector('[data-testid="sidebar_bottom"]');
-      const button = [...(bottom?.querySelectorAll('button,[role="button"]') || [])].find(accountVisible);
+      const buttons = [...(bottom?.querySelectorAll('button,[role="button"]') || [])].filter(accountVisible);
+      const button = buttons.find(element => element.querySelector('img[alt="avatar"],img'))
+        || buttons.find(element => clean(element.innerText || element.textContent));
       if (!button) return { stage: 'missing-profile-button' };
       const rect = button.getBoundingClientRect();
       const x=rect.left+rect.width/2,y=rect.top+rect.height/2,top=document.elementFromPoint(x,y);
@@ -713,8 +741,7 @@ async function accountSwitcherRows(client) {
     if (!menu) return [];
     const rowElements = new Set();
     const rows = [...menu.querySelectorAll('img[alt="avatar"],img')].map((image, index) => {
-      let row = image.parentElement;
-      while (row && row !== menu && !(row.classList.contains('rounded-dbx-sm') && clean(row.innerText || row.textContent))) row = row.parentElement;
+      const row = accountRowForImage(image, menu);
       if (!row || row === menu || !accountVisible(row)) return null;
       if (rowElements.has(row)) return null;
       rowElements.add(row);
@@ -765,26 +792,38 @@ async function closeAccountMenus(client) {
 }
 
 async function listAvailableAccounts(client, { keepOpen = false } = {}) {
-  await openAccountSwitcher(client);
-  let accounts = [];
-  try {
-    await scrollAccountSwitcher(client, "start");
-    await delay(140);
-    for (let pass = 0; pass < 48; pass++) {
-      const rows = await waitFor(client, async () => {
-        const found = await accountSwitcherRows(client);
-        return found.length ? found : null;
-      }, pass === 0 ? 5000 : 1400, 120);
-      accounts = mergeAccountIdentities(accounts, rows);
-      const scroll = await scrollAccountSwitcher(client, "next");
-      if (!scroll.found || !scroll.moved) break;
-      await delay(140);
+  let lastError = null;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    let accounts = [];
+    try {
+      if (attempt) {
+        await closeAccountMenus(client);
+        await delay(350 + attempt * 250);
+      }
+      await openAccountSwitcher(client);
+      await scrollAccountSwitcher(client, "start");
+      await delay(220);
+      for (let pass = 0; pass < 48; pass++) {
+        const rows = await waitFor(client, async () => {
+          const found = await accountSwitcherRows(client);
+          return found.length ? found : null;
+        }, pass === 0 ? 5000 + attempt * 1500 : 1600, 120);
+        accounts = mergeAccountIdentities(accounts, rows);
+        const scroll = await scrollAccountSwitcher(client, "next");
+        if (!scroll.found || !scroll.moved) break;
+        await delay(180);
+      }
+      if (accounts.length) {
+        if (!keepOpen) await closeAccountMenus(client);
+        return accounts.map(({ x, y, ...identity }) => identity);
+      }
+      lastError = new Error("账号菜单已打开，但账号行仍在加载");
+    } catch (error) {
+      lastError = error;
     }
-  } finally {
-    if (!keepOpen) await closeAccountMenus(client);
   }
-  if (!accounts?.length) throw new Error("豆包账号切换列表中没有读取到已登录账号");
-  return accounts.map(({ x, y, ...identity }) => identity);
+  await closeAccountMenus(client);
+  throw controllerError("DOUBAO_ACCOUNT_LIST_READ_FAILED", `豆包账号列表暂未就绪：${lastError?.message || "没有读取到已登录账号"}；请稍候后重试`);
 }
 
 async function waitForAccountPage(port, wanted, timeout = 15000) {
@@ -867,7 +906,12 @@ async function switchToAccount({ client, target, progress = () => {}, allowWindo
     let element = document.elementFromPoint(x, y);
     const menu = element?.closest('[role="menu"]');
     if (!menu || !accountMenus().includes(menu)) return false;
-    while (element && element !== document.body && !(element.classList?.contains('rounded-dbx-sm') && clean(element.innerText || element.textContent))) element = element.parentElement;
+    while (element && element !== document.body) {
+      const rect = element.getBoundingClientRect();
+      const text = clean(element.innerText || element.textContent);
+      if (text && rect.width >= 100 && rect.height >= 40 && rect.height <= 92) break;
+      element = element.parentElement;
+    }
     if (!element || element === document.body || !accountVisible(element)) return false;
     const name = String(element.innerText || element.textContent || '').split(/\\n+/).map(clean).filter(Boolean)[0];
     return name === ${JSON.stringify(wanted.name)};
@@ -1906,7 +1950,7 @@ async function setCustomDurationSlider(client, seconds) {
     const numbers=[...menu.querySelectorAll('span,div')].filter(isVisible).map(item=>/^(\\d+)\\s*s$/i.exec(clean(item.innerText||item.textContent))).filter(Boolean).map(match=>Number(match[1]));
     const rect=track.getBoundingClientRect();
     const minSec=numbers.length?Math.min(...numbers):4;
-    const maxSec=Math.max(numbers.length?Math.max(...numbers):15, Number(seconds)||15);
+    const maxSec=Math.max(numbers.length?Math.max(...numbers):15, ${Number(seconds)}||15);
     return{x:rect.left+rect.width/2,y:rect.top+rect.height/2,left:rect.left,width:rect.width,minimum:Number(element.getAttribute('aria-valuemin')),maximum:Number(element.getAttribute('aria-valuemax')),current:Number(element.getAttribute('aria-valuenow')),minimumSeconds:minSec,maximumSeconds:maxSec};
   })()`);
   if (!slider) return null;
@@ -1939,10 +1983,11 @@ async function chooseRatioAndDuration(client, ratio, duration, model) {
     }
   }
   const seconds = Number.parseInt(String(duration || "10"), 10);
+  let range = null;
   if (Number.isFinite(seconds)) {
     const maximumDuration = String(model || "").trim() === "Seedance 2.5" ? 30 : 15;
     if (seconds < 4 || seconds > maximumDuration) throw new Error(`${model || "当前模型"} 视频时长只支持 4 到 ${maximumDuration} 秒`);
-    let range = await setDurationRange(client, seconds);
+    range = await setDurationRange(client, seconds);
     if (!range) range = await setCustomDurationSlider(client, seconds);
     if (!range) {
       const option = await clickText(client, [`${seconds}s`, `${seconds}秒`], { preferBottom: true, contains: false });
@@ -2502,9 +2547,9 @@ async function waitForSubmissionAccepted(client, prompt, before, timeout, should
         if(context)before.confirmationContext ||= context;
         return {actionRequired:true,actionType,actionMessage:item.text,actionSignature:item.signature,actionMessageIndex:item.index,...common};
       };
+      if (/视频生成已提交/.test(item.text) && !isGenerationFailureText(item.text)) return accepted(item);
       if (isPaidQuotaConfirmationText(item.text)) return action('paid_quota');
       if (isQuotaExhaustedText(item.text)) return {quotaExhausted:true,quotaMessage:item.text,...common};
-      if (/视频生成已提交/.test(item.text) && !isGenerationFailureText(item.text)) return accepted(item);
       if (transientVideoFeedback(item.text)) return {temporarilyUnavailable:true,message:item.text,...common};
       if (isGenerationFailureText(item.text)) return {generationFailure:true,failureMessage:item.text,quotaNotDeducted:isQuotaNotDeductedFailureText(item.text),...common};
       if (/你的视频生成好了|视频已生成|视频生成完成|已经生成好了|可以下载视频/.test(item.text) && chain) {
@@ -2685,10 +2730,10 @@ async function submitAndVerify(client, prompt, progress, folder, expectedAttachm
       }
       const paidQuota = outcome.actionType === "paid_quota";
       if(paidQuota){
-        const message="豆包要求使用付费额度，本次画布任务已结束；未确认付费，请换账号或重新明确选择";
+        const message="豆包等待你手动确认付费；画布继续核验原任务回执，超时后可点击同步结果";
         savePendingSubmission(folder,before,job,message);
-        onSubmissionState({state:'paid_blocked',message,detail:outcome.actionMessage});
-        return {paidBlocked:true,message};
+        onSubmissionState({state:'waiting_paid_confirmation',message,detail:outcome.actionMessage});
+        return {pendingReceipt:true,pendingState:'waiting_paid_confirmation',message};
       }
       if (!paidQuota) {
         if(before.complianceAttempted) return {pendingReceipt:true,message:"素材确认已尝试，正在核验原任务回执；不会再次点击或重新提交"};
@@ -2992,22 +3037,22 @@ async function inspectNativeAccounts({ exe, progress, log }) {
     }
     let accounts = [];
     let lastError = null;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 4; attempt++) {
       try {
         accounts = await listAvailableAccounts(connection.client);
         break;
       } catch (error) {
         lastError = error;
         log(`第 ${attempt + 1} 次读取豆包账号切换列表失败：${error.message}`);
-        if (attempt < 2) await delay(450);
+        if (attempt < 3) await delay(700 + attempt * 500);
       }
     }
     if (!accounts.length) {
       throw controllerError("DOUBAO_ACCOUNT_LIST_READ_FAILED", `未能完整读取豆包账号列表：${lastError?.message || "账号切换列表为空"}`);
     }
-    // 侧栏当前账号是状态信息，不是额外的菜单行。它没有菜单 rowKey；
-    // 混入列表会把任意当前账号重复计算，导致首次同步也误报重名。
-    // 保留列表原有的不同行，让真正同名的账号继续由上层拒绝歧义。
+    if (!accounts.some(account => accountIdentityMatches(account, currentAccount))) {
+      accounts.unshift({ ...currentAccount, rowKey: "current-account" });
+    }
     return { ok: true, currentAccount, accounts, port: connection.port };
   } finally {
     connection.client.close();
@@ -3318,8 +3363,8 @@ async function monitorPendingReceipt({client,baseline,folder,job,progress,onStat
       finally{onInteractionComplete();}
     }
     if(outcome?.actionType==='paid_quota'){
-      const message='豆包要求使用付费额度，本次画布任务已结束；未确认付费，同账号未提交任务已停止';
-      report('paid_blocked',message);return {paidBlocked:true,message};
+      lastReason='豆包仍显示付费确认，等待人工处理或原任务正式回执';
+      report('waiting_paid_confirmation',lastReason+'；画布不会代替你确认付费，超时后可同步已有结果');
     }
     else if(outcome?.needsAttention){lastReason=outcome.message;report('monitor_paused',outcome.message);}
     else if(outcome?.actionRequired&&!baseline.complianceAttempted)report('waiting_confirmation','豆包仍显示确认要求，正在核验是否已处理；需要操作时请在原对话确认，不要重新提交');

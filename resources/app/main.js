@@ -18,6 +18,7 @@ const platformHelper = require('./platform-helper');
 const licenseClient = require('./license-client');
 const integrityCheck = require('./integrity-check');
 const updateClient = require('./update-client');
+const settingsStore = require('./settings-store');
 const MAIN_BOOT_SEAL = "JXPB-BOOT-71ae5c90d3f24b18";
 const XIANYU_SHOP_URL = "https://m.tb.cn/h.8js2tsw?tk=OkKiT2yF9Ur";
 
@@ -449,6 +450,37 @@ async function retryBoundMaterial(job,folder) {
   }
 }
 
+const manualMaterialJobs = new Set();
+
+async function removeVideoWatermark(jobId) {
+  if (manualMaterialJobs.has(jobId)) return { ok: false, error: "该视频正在去除水印，请稍候" };
+  manualMaterialJobs.add(jobId);
+  try {
+    const folder = jobFolder(jobId);
+    const job = JSON.parse(fs.readFileSync(path.join(folder, "画布任务.json"), "utf8"));
+    if (job.id !== jobId || !job.nodeId || job.type === "image" || !job.accountIdentity?.name) {
+      throw new Error("缺少原视频任务凭据，无法获取无水印版本");
+    }
+    if (activeMonitors.has(jobId) || activeSubmissions.has(jobId) || taskControl(jobId).cancelled) {
+      throw new Error("任务仍在运行或已停止，请先完成或恢复原任务");
+    }
+    if (!noWatermarkService.status().running || !noWatermarkService.status().enabled) {
+      await noWatermarkService.start();
+      const config = loadConfig();
+      config.noWatermarkEnabled = true;
+      saveConfig(config);
+    }
+    const material = await retryBoundMaterial(job, folder);
+    if (!material.file) return { ok: false, error: material.message || "暂未获取到无水印视频" };
+    return { ok: true, file: material.file, url: pathToFileURL(material.file).href, message: material.message };
+  } catch (error) {
+    return { ok: false, error: error.message };
+  } finally {
+    manualMaterialJobs.delete(jobId);
+    emitNoWatermarkStatus();
+  }
+}
+
 function emitResult(job, file) {
   if(taskControls.get(job.id)?.cancelled)return null;
   const payload = { jobId: job.id, nodeId: job.nodeId, file, url: pathToFileURL(file).href, completedAt: new Date().toISOString() };
@@ -719,11 +751,10 @@ function beginImageResultMonitor({ client, baseline, folder, job, timeout, contr
 
 function configFile() { return path.join(app.getPath("userData"), "settings.json"); }
 function loadConfig() {
-  try { return JSON.parse(fs.readFileSync(configFile(), "utf8")); } catch { return {}; }
+  return settingsStore.loadSettings(configFile());
 }
 function saveConfig(config) {
-  fs.mkdirSync(path.dirname(configFile()), { recursive: true });
-  fs.writeFileSync(configFile(), JSON.stringify(config, null, 2), "utf8");
+  settingsStore.saveSettings(configFile(), config);
 }
 function localDayKey(date = new Date()) {
   const year = date.getFullYear();
@@ -2498,7 +2529,7 @@ function createWindow() {
     recoverCanvasWindow(`render-process-gone:${details?.reason || ""}`);
   });
   win.webContents.session.clearCache().catch(() => {});
-  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260911-f6" } });
+  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260916-r1" } });
   win.on("closed", () => {
     win = null;
     closeHiddenBrowserWindows();
@@ -2908,7 +2939,7 @@ ipcMain.handle("sync-accounts", licensedIpc(async () => {
     }));
     if (result.needLogin) return { ok: false, needLogin: true, error: "请先在官方豆包中登录账号" };
     const updated = syncProfiles(result.accounts, result.currentAccount);
-    return { ok: true, profiles: updated, currentAccount: result.currentAccount, accountCount: result.accounts.length };
+    return { ok: true, profiles: updated, currentAccount: result.currentAccount, accountCount: updated.filter(profile => profile.accountName).length };
   } catch (error) {
     automationLog("同步豆包账号失败", { error: error.message, code: error.code });
     return { ok: false, error: error.message, code: error.code };
@@ -3002,6 +3033,7 @@ ipcMain.handle("open-job-folder", licensedIpc((_event, jobId) => {
   } catch (error) { return error.message; }
 }));
 ipcMain.handle("no-watermark-status", licensedIpc(() => noWatermarkService.status()));
+ipcMain.handle("remove-video-watermark", licensedIpc((_event, jobId) => removeVideoWatermark(jobId)));
 ipcMain.handle("set-no-watermark-enabled", licensedIpc(async (_event, enabled) => {
   const config = loadConfig();
   config.noWatermarkEnabled = Boolean(enabled);

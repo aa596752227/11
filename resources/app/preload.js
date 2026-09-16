@@ -52,6 +52,7 @@ contextBridge.exposeInMainWorld("desktop", {
   openTaskFolder: () => ipcRenderer.invoke("open-task-folder"),
   openJobFolder: jobId => ipcRenderer.invoke("open-job-folder", jobId),
   noWatermarkStatus: () => ipcRenderer.invoke("no-watermark-status"),
+  removeVideoWatermark: jobId => ipcRenderer.invoke("remove-video-watermark", jobId),
   setNoWatermarkEnabled: enabled => ipcRenderer.invoke("set-no-watermark-enabled", Boolean(enabled)),
   openNoWatermarkFolder: () => ipcRenderer.invoke("open-no-watermark-folder"),
   deleteHistoryJob: job => ipcRenderer.invoke("delete-history-job", job),

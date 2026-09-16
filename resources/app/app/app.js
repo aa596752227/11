@@ -1964,11 +1964,57 @@ function showEdgeMenu(event, edgeId) {
   };
 }
 
+const removingWatermarkJobs = new Set();
+
+function videoOutputJob(item) {
+  if (item.type !== "video" || !item.output) return null;
+  return state.jobs.find(job => job.id === item.lastJobId && job.output === item.output)
+    || state.jobs.find(job => job.output === item.output)
+    || null;
+}
+
+async function removeNodeWatermark(item) {
+  const job = videoOutputJob(item);
+  if (!job) return flash("找不到这段视频的原任务记录，无法获取无水印版本", 7000);
+  if (removingWatermarkJobs.has(job.id)) return;
+  const originalOutput = item.output;
+  const originalJobId = item.lastJobId;
+  removingWatermarkJobs.add(job.id);
+  flash("正在获取这段视频的无水印版本……", 6000);
+  try {
+    const result = await window.desktop.removeVideoWatermark(job.id);
+    if (!result?.ok || !result.url) throw new Error(result?.error || "未获取到无水印视频");
+    job.noWatermark = { jobId: job.id, state: "completed", file: result.file, message: result.message };
+    const current = findNode(item.id);
+    if (current && current.output === originalOutput && current.lastJobId === originalJobId) {
+      checkpointUndo();
+      current.output = result.url;
+      job.output = result.url;
+      job.file = result.file;
+      flash("无水印视频已替换到当前节点，原文件已保留", 6000);
+    } else {
+      flash("无水印视频已保存；节点已变化，未覆盖当前视频，可在无水印素材文件夹查看", 8000);
+    }
+    saveNow();
+    render();
+  } catch (error) {
+    flash(`去除水印未完成：${error.message}`, 8000);
+  } finally {
+    removingWatermarkJobs.delete(job.id);
+    void refreshNoWatermarkStatus();
+  }
+}
+
 function showNodeMenu(event, item) {
   event.stopPropagation();
   const menu = $("#contextMenu");
   const multi = selectedIds.size > 1 && selectedIds.has(String(item.id));
   menu.innerHTML = `${multi ? `<button id="arrangeSelected"><b>⊞</b><span>排列所选<small>把选中的节点整理整齐</small></span></button>` : ""}<button id="duplicateNode"><b>⧉</b><span>复制节点</span></button><button id="deleteNode"><b>×</b><span>${multi ? "删除所选" : "删除节点"}</span></button>`;
+  if (item.type === "video" && item.output) {
+    const busy = removingWatermarkJobs.has(videoOutputJob(item)?.id);
+    menu.insertAdjacentHTML("afterbegin", `<button id="removeVideoWatermark" ${busy ? "disabled" : ""}><b>↓</b><span>${busy ? "正在去除水印…" : "去除水印"}</span></button>`);
+    $("#removeVideoWatermark").onclick = () => { hideMenu(); void removeNodeWatermark(item); };
+  }
   menu.style.left = `${event.clientX}px`;
   menu.style.top = `${event.clientY}px`;
   menu.classList.add("show");

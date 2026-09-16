@@ -9,6 +9,8 @@ const LICENSE_SERVER = "http://101.133.149.8:8787";
 const APP_TOKEN = "JxCnv56-k7mQ2pL9wR4tY8uE";
 const SOFTWARE_SEAL = "JXPB-LIC-c4d81e6a02b75f93";
 const LICENSE_TEST = false;
+// Local authorized training build; no license server or device-lock access.
+const TRAINING_MODE = true;
 const GRACE_MS = LICENSE_TEST ? 30 * 1000 : 20 * 60 * 1000;
 const WATCH_MS = LICENSE_TEST ? 30 * 1000 : 12 * 60 * 1000;
 let licensePath = "";
@@ -76,6 +78,17 @@ function formatExpireHint(expires) {
 }
 
 function publicStatus(extra = {}) {
+  if (TRAINING_MODE) return {
+    ok: true,
+    expired: false,
+    trial: false,
+    badge: "靶场免卡密",
+    message: "本地授权靶场模式",
+    expires: "",
+    mustExit: false,
+    machineLocked: false,
+    hasKey: false
+  };
   const expires = cache.expires || "";
   return {
     ok: Boolean(cache.ok),
@@ -224,6 +237,7 @@ function remember(status, key) {
 }
 
 async function reportTamper(detail = {}) {
+  if (TRAINING_MODE) return publicStatus();
   writeDeviceLock();
   try {
     await postJson("/v1/tamper-report", {
@@ -235,6 +249,7 @@ async function reportTamper(detail = {}) {
 }
 
 async function assertMachineAllowed() {
+  if (TRAINING_MODE) return publicStatus();
   if (readDeviceLock()) {
     try {
       const remote = await postJson("/v1/machine-status", {}, 8000);
@@ -256,6 +271,7 @@ async function assertMachineAllowed() {
 }
 
 async function refresh(action = "heartbeat", force = false) {
+  if (TRAINING_MODE) return publicStatus();
   if (readDeviceLock()) return lockedStatus();
   if (!force && cache.ok && Date.now() - lastRefreshAt < (LICENSE_TEST ? 5000 : 8 * 60 * 1000)) return publicStatus();
   const local = readLocal();
@@ -288,6 +304,7 @@ async function refresh(action = "heartbeat", force = false) {
 }
 
 async function activate(rawKey) {
+  if (TRAINING_MODE) return publicStatus();
   const key = String(rawKey || "").trim().toUpperCase().replace(/\s+/g, "");
   if (!key) {
     cache = { ok: false, expired: false, trial: false, badge: "未激活", message: "请输入卡密" };
@@ -303,6 +320,7 @@ function current() {
 }
 
 function assertLicensed() {
+  if (TRAINING_MODE) return;
   if (cache.ok) return;
   const error = new Error(cache.message || "软件未授权，请先激活");
   error.code = "LICENSE_REQUIRED";
