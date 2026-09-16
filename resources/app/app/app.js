@@ -1940,6 +1940,14 @@ async function syncHistoryJob(job) {
     if(job.stopped)return;
     if(!result?.ok){
       if(recoverStopped&&(job.stateSequence||0)===previous.sequence){job.stopped=previous.stopped;job.state=previous.state;job.status=previous.status;}
+      if(result?.notSubmitted){
+        job.state='failed';
+        job.retryable=Boolean(result.retryable);
+        job.quotaNotDeducted=Boolean(result.quotaNotDeducted);
+        job.status=result.error||'本任务未提交，豆包端没有结果可同步';
+        const item=findNode(job.nodeId);
+        if(item?.lastJobId===job.id)item.status='failed';
+      }
       job.syncNotice=(result?.busy?'暂不能恢复：':'恢复结果提示：')+(result?.error||result?.message||'连接异常');
       return flash(job.syncNotice,8000);
     }

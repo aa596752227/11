@@ -1214,8 +1214,15 @@ async function runSubmission(job, control = taskControl(job.id)) {
       emitJobFailure(job, error.message, { quotaExhausted: true });
       return { ok: false, quotaExhausted: true, capability: "video", error: `${profile.name}：${error.message}`, taskFolder: folder, profiles: profiles() };
     }
-    emitJobFailure(job, error.message, { retryable: error.code === "DOUBAO_GENERATION_REJECTED", quotaNotDeducted: Boolean(error.details?.quotaNotDeducted) });
-    return { ok: false, error: error.message, code: error.code, taskFolder: folder };
+    const preSubmissionFailure = new Set([
+      "DOUBAO_ACCOUNT_LIST_READ_FAILED", "DOUBAO_ACCOUNT_MENU_NOT_OPEN", "DOUBAO_ACCOUNT_ENTRY_BLOCKED",
+      "DOUBAO_ACCOUNT_NOT_FOUND", "DOUBAO_ACCOUNT_AMBIGUOUS", "DOUBAO_ACCOUNT_VERIFY_FAILED",
+      "DOUBAO_ACCOUNT_CLICK_TARGET_LOST", "DOUBAO_ACCOUNT_UNBOUND", "DOUBAO_MAIN_WINDOW_REQUIRED"
+    ]).has(error.code);
+    const retryable = error.code === "DOUBAO_GENERATION_REJECTED" || preSubmissionFailure;
+    const quotaNotDeducted = Boolean(error.details?.quotaNotDeducted) || preSubmissionFailure;
+    emitJobFailure(job, error.message, { retryable, quotaNotDeducted });
+    return { ok: false, error: error.message, code: error.code, retryable, quotaNotDeducted, taskFolder: folder };
   } finally {
     activeSubmissions.delete(job.id);
     if (captureArmed && !activeMonitors.has(job.id)) {
@@ -2529,7 +2536,7 @@ function createWindow() {
     recoverCanvasWindow(`render-process-gone:${details?.reason || ""}`);
   });
   win.webContents.session.clearCache().catch(() => {});
-  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260916-r1" } });
+  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260916-r2" } });
   win.on("closed", () => {
     win = null;
     closeHiddenBrowserWindows();
@@ -3109,6 +3116,25 @@ function addLegacyRecoveryBounds(job, baseline) {
   }catch{}
 }
 
+function readJsonIfPresent(file) {
+  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
+  catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function loadDoubaoRecoveryRecord(folder, jobId) {
+  const receipt = readJsonIfPresent(path.join(folder, "豆包提交凭据.json"));
+  const pending = receipt ? null : readJsonIfPresent(path.join(folder, "豆包待确认.json"));
+  const record = receipt || pending;
+  if (!record) return { receipt: null, pending: null, baseline: null };
+  if (record.jobId !== jobId) throw new Error("原提交凭据与任务不一致");
+  const baseline = receipt?.baseline || pending?.before;
+  if (!baseline) throw new Error("缺少原任务提交基线");
+  return { receipt, pending, baseline };
+}
+
 ipcMain.handle("sync-doubao-result", licensedIpc(async (_event, summary) => {
   let folder,job,baseline;
   try{
@@ -3141,12 +3167,15 @@ ipcMain.handle("sync-doubao-result", licensedIpc(async (_event, summary) => {
     if(submissionBusy||accountSyncBusy||activeSubmissions.size||resultViewLeases)return {ok:false,busy:true,error:"正在提交、切换账号或回填，请稍后恢复；原任务状态未改变"};
     if(activeBatchProfile()&&activeBatchProfile()!==job.profileId)return {ok:false,busy:true,error:"其他账号本批任务尚未处理完，请完成或停止后再恢复；不会擅自切号"};
     try{
-      let receipt;
-      try{receipt=JSON.parse(fs.readFileSync(path.join(folder,'豆包提交凭据.json'),'utf8'));}catch{}
-      const pending=receipt?null:JSON.parse(fs.readFileSync(path.join(folder,'豆包待确认.json'),'utf8'));
-      if((receipt||pending).jobId!==job.id)throw new Error("原提交凭据与任务不一致");
-      baseline=receipt?.baseline||pending?.before;
-      if(!baseline)throw new Error("缺少原任务提交基线");
+      const recovery=loadDoubaoRecoveryRecord(folder,job.id);
+      if(!recovery.baseline){
+        const stoppedBeforeSubmit=previous.state==='failed'&&/(账号|切换|登录|主对话|生成按钮|模型)/.test(String(previous.message||previous.error||''));
+        return {ok:false,notSubmitted:true,retryable:true,quotaNotDeducted:true,error:stoppedBeforeSubmit
+          ?"本任务在提交前的账号或页面核对阶段已停止，参考图和提示词未上传，豆包端没有结果可同步；当前账号恢复后，请在原视频节点重新生成"
+          :"本地没有这条任务的豆包提交凭据，无法安全同步结果；不会按最新视频或提示词顺序猜测"};
+      }
+      const {receipt}=recovery;
+      baseline=recovery.baseline;
       addLegacyRecoveryBounds(job,baseline);
       if(!receipt){baseline.awaitingSubmissionReceipt=true;baseline.receiptDeadline=Date.now()+60000;}
     }catch(error){return {ok:false,needsAttention:true,error:"无法安全恢复原任务："+error.message+"；不会按最新视频或提示词顺序猜测"};}
