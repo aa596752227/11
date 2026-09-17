@@ -2164,6 +2164,9 @@ html[data-theme="day"] #pointerModeBtn[aria-pressed="true"] {
   bottom: 18px;
   z-index: 28;
   display: flex;
+  max-width: calc(100% - 28px);
+  flex-wrap: wrap;
+  justify-content: center;
   align-items: center;
   gap: 8px;
   padding: 7px 10px;

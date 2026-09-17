@@ -210,7 +210,13 @@ function paintSelection() {
   const count = selectedIds.size || (state.selected ? 1 : 0);
   const bar = $("#arrangeBar");
   const label = $("#arrangeCount");
+  const syncButton = $("#syncSelectedResults");
   if (label) label.textContent = count ? `已选 ${count}` : "未选择";
+  if (syncButton) {
+    const jobs = selectedVideoSyncJobs();
+    syncButton.disabled = bulkSyncing || jobs.length === 0;
+    syncButton.textContent = bulkSyncing ? "↻ 正在同步" : `↻ 同步结果${jobs.length ? ` ${jobs.length}` : ""}`;
+  }
   if (bar) bar.hidden = count < 2;
 }
 
@@ -1818,6 +1824,7 @@ function formatJobTime(job) {
 
 const renderedHistory = new Map();
 const syncingJobs = new Set();
+let bulkSyncing = false;
 function renderHistoryPanel() {
   $("#panelTitle").textContent = "生成历史";
   $("#closePanel").hidden = false;
@@ -1927,17 +1934,17 @@ function focusNode(nodeId) {
   render();
 }
 
-async function syncHistoryJob(job) {
-  if(syncingJobs.has(job.id)||job.state==='stopping')return;
+async function syncHistoryJob(job, options = {}) {
+  if(syncingJobs.has(job.id)||job.state==='stopping')return {ok:false,busy:true,error:'任务正在核验或停止'};
   const recoverStopped=Boolean(job.stopped);
-  if(recoverStopped&&!confirm('这个任务已停止。是否只恢复豆包已经生成的结果？不会重新上传、重新生成或确认付费。'))return;
+  if(recoverStopped&&!options.skipStoppedConfirm&&!confirm('这个任务已停止。是否只恢复豆包已经生成的结果？不会重新上传、重新生成或确认付费。'))return {ok:false,cancelled:true};
   const previous={state:job.state,status:job.status,stopped:job.stopped,sequence:job.stateSequence||0};
   syncingJobs.add(job.id);job.syncNotice='正在核验已有结果，不重复生成';
   if(recoverStopped)job.stopped=false;
   renderHistoryPanel();
   try{
     const result=await window.desktop.syncDoubaoResult({...job,recoverStopped});
-    if(job.stopped)return;
+    if(job.stopped)return {ok:false,stopped:true,error:'任务已停止'};
     if(!result?.ok){
       if(recoverStopped&&(job.stateSequence||0)===previous.sequence){job.stopped=previous.stopped;job.state=previous.state;job.status=previous.status;}
       if(result?.notSubmitted){
@@ -1949,14 +1956,58 @@ async function syncHistoryJob(job) {
         if(item?.lastJobId===job.id)item.status='failed';
       }
       job.syncNotice=(result?.busy?'暂不能恢复：':'恢复结果提示：')+(result?.error||result?.message||'连接异常');
-      return flash(job.syncNotice,8000);
+      if(!options.silent)flash(job.syncNotice,8000);
+      return result||{ok:false,error:'连接异常'};
     }
     job.syncNotice=result.message||(result.completed?'已有视频已回填':'已恢复原任务监听');
-    flash(job.syncNotice,6000);
+    if(!options.silent)flash(job.syncNotice,6000);
+    return result;
   }catch(error){
     if(recoverStopped&&(job.stateSequence||0)===previous.sequence){job.stopped=previous.stopped;job.state=previous.state;job.status=previous.status;}
-    job.syncNotice='恢复连接暂不可用：'+error.message;flash(job.syncNotice,7000);
+    job.syncNotice='恢复连接暂不可用：'+error.message;
+    if(!options.silent)flash(job.syncNotice,7000);
+    return {ok:false,error:error.message};
   }finally{syncingJobs.delete(job.id);save();render();}
+}
+
+function selectedVideoSyncJobs(nodes = selectionNodes()) {
+  const result = [], seen = new Set();
+  for (const item of nodes) {
+    if (item?.type !== 'video') continue;
+    const job = state.jobs.find(entry => entry.id === item.lastJobId)
+      || state.jobs.find(entry => entry.nodeId === item.id);
+    if (!job || seen.has(job.id) || syncingJobs.has(job.id) || job.state === 'stopping') continue;
+    if (job.state === 'completed' && item.output) continue;
+    if (job.state === 'failed' && job.quotaNotDeducted) continue;
+    seen.add(job.id);
+    result.push(job);
+  }
+  return result;
+}
+
+async function syncSelectedVideoResults(nodes = selectionNodes()) {
+  if (bulkSyncing) return;
+  const jobs = selectedVideoSyncJobs(nodes);
+  if (!jobs.length) return flash('框选范围内没有待同步的视频任务', 5000);
+  const stoppedCount = jobs.filter(job => job.stopped).length;
+  if (stoppedCount && !confirm(`所选范围有 ${stoppedCount} 个已停止任务。是否只恢复豆包已有结果？不会重新上传或重新生成。`)) return;
+  hideMenu();
+  bulkSyncing = true;
+  paintSelection();
+  flash(`正在逐条核验 ${jobs.length} 个视频任务，不会重复生成`, 6000);
+  let started = 0, failed = 0;
+  try {
+    for (const job of jobs) {
+      const result = await syncHistoryJob(job, { silent: true, skipStoppedConfirm: true });
+      if (result?.ok) started += 1; else failed += 1;
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+  } finally {
+    bulkSyncing = false;
+    paintSelection();
+  }
+  const suffix = failed ? `，${failed} 个需查看历史提示` : '';
+  flash(`已启动 ${started} 个任务的结果核验${suffix}`, 8000);
 }
 
 function showEdgeMenu(event, edgeId) {
@@ -2017,7 +2068,8 @@ function showNodeMenu(event, item) {
   event.stopPropagation();
   const menu = $("#contextMenu");
   const multi = selectedIds.size > 1 && selectedIds.has(String(item.id));
-  menu.innerHTML = `${multi ? `<button id="arrangeSelected"><b>⊞</b><span>排列所选<small>把选中的节点整理整齐</small></span></button>` : ""}<button id="duplicateNode"><b>⧉</b><span>复制节点</span></button><button id="deleteNode"><b>×</b><span>${multi ? "删除所选" : "删除节点"}</span></button>`;
+  const syncJobs = multi ? selectedVideoSyncJobs() : [];
+  menu.innerHTML = `${syncJobs.length ? `<button id="syncSelectedVideos"><b>↻</b><span>同步所选视频<small>${syncJobs.length} 个任务逐条核验</small></span></button>` : ""}${multi ? `<button id="arrangeSelected"><b>⊞</b><span>排列所选<small>把选中的节点整理整齐</small></span></button>` : ""}<button id="duplicateNode"><b>⧉</b><span>复制节点</span></button><button id="deleteNode"><b>×</b><span>${multi ? "删除所选" : "删除节点"}</span></button>`;
   if (item.type === "video" && item.output) {
     const busy = removingWatermarkJobs.has(videoOutputJob(item)?.id);
     menu.insertAdjacentHTML("afterbegin", `<button id="removeVideoWatermark" ${busy ? "disabled" : ""}><b>↓</b><span>${busy ? "正在去除水印…" : "去除水印"}</span></button>`);
@@ -2026,6 +2078,7 @@ function showNodeMenu(event, item) {
   menu.style.left = `${event.clientX}px`;
   menu.style.top = `${event.clientY}px`;
   menu.classList.add("show");
+  $("#syncSelectedVideos")?.addEventListener("click", () => { void syncSelectedVideoResults(); });
   $("#arrangeSelected")?.addEventListener("click", () => { arrangeTidy(); hideMenu(); });
   $("#duplicateNode").onclick = () => { duplicateNode(item); hideMenu(); };
   $("#deleteNode").onclick = () => {
@@ -2037,10 +2090,12 @@ function showNodeMenu(event, item) {
 
 function showCanvasMenu(event) {
   const menu = $("#contextMenu");
-  menu.innerHTML = `<button id="createVideoNode"><b>▴</b><span>视频节点<small>创建节点并填写提示词</small></span></button><button id="uploadImage"><b>▧</b><span>上传图片<small>选择一张或多张参考图</small></span></button><button id="arrangeTidy"><b>⊞</b><span>整理画布<small>按任务把参考图排到视频左边</small></span></button><button id="arrangeGrid"><b>▦</b><span>网格排列</span></button>`;
+  const syncJobs = selectedVideoSyncJobs();
+  menu.innerHTML = `${syncJobs.length ? `<button id="syncSelectedVideos"><b>↻</b><span>同步所选视频<small>${syncJobs.length} 个任务逐条核验</small></span></button>` : ""}<button id="createVideoNode"><b>▴</b><span>视频节点<small>创建节点并填写提示词</small></span></button><button id="uploadImage"><b>▧</b><span>上传图片<small>选择一张或多张参考图</small></span></button><button id="arrangeTidy"><b>⊞</b><span>整理画布<small>按任务把参考图排到视频左边</small></span></button><button id="arrangeGrid"><b>▦</b><span>网格排列</span></button>`;
   menu.style.left = `${event.clientX}px`;
   menu.style.top = `${event.clientY}px`;
   menu.classList.add("show");
+  $("#syncSelectedVideos")?.addEventListener("click", () => { void syncSelectedVideoResults(); });
   $("#createVideoNode").onclick = () => {
     const item = createVideoNode(menuPoint.x, menuPoint.y);
     hideMenu();
@@ -2657,6 +2712,7 @@ function bindPage() {
   $("#pointerModeBtn")?.addEventListener("click", () => toggleCanvasPointerMode());
   syncCanvasPointerMode();
   $("#arrangeBtn")?.addEventListener("click", () => arrangeTidy());
+  $("#syncSelectedResults")?.addEventListener("click", () => { void syncSelectedVideoResults(); });
   $$("[data-arrange]").forEach(button => {
     button.onclick = () => {
       const mode = button.dataset.arrange;

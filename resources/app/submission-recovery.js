@@ -22,7 +22,7 @@ function parameterConfirmation(text = '', job = {}) {
   return { detected:true, safe, reason:safe?'':'参数不完整、不一致，或涉及费用/权利确认，需要人工处理' };
 }
 function isConfirmationReply(text = '') {
-  return /^(?:确认[，,、\s]*)?(?:按上述参数生成视频|确认|确认生成|确认生成视频|开始生成|直接生成|生成吧|可以生成|我已确认|确认并继续|同意并继续|继续生成|确认素材|确认素材合规)[。！!\s]*$/.test(String(text).trim());
+  return /^(?:确认[，,、\s]*)?(?:按上述参数生成视频|确认|生成视频|确认生成|确认生成视频|开始生成|直接生成|生成吧|可以生成|我已确认|确认并继续|同意并继续|继续生成|确认素材|确认素材合规)[。！!\s]*$/.test(String(text).trim());
 }
 function confirmationChain(context, state) {
   const invalid=reason=>({valid:false,reason,assistant:[],users:[]});

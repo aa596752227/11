@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { restorableConversationContext } = require('../resources/app/doubao-controller');
 
 const mainSource = fs.readFileSync(path.join(__dirname, '../resources/app/main.js'), 'utf8');
 const start = mainSource.indexOf('function readJsonIfPresent(');
@@ -54,4 +55,23 @@ test('a mismatched record is rejected instead of guessed', () => {
     () => recovery({ '豆包提交凭据.json': JSON.stringify({ jobId: 'other', baseline: {} }) }),
     /原提交凭据与任务不一致/
   );
+});
+
+test('a pending receipt can restore only its exact saved Doubao conversation', () => {
+  const baseline = {
+    awaitingSubmissionReceipt: true,
+    confirmationContext: {
+      url: 'chrome://doubao-chat/chat/38441970884741634',
+      root: { messageId: '55680392056585474' }
+    }
+  };
+  assert.equal(restorableConversationContext(baseline), baseline.confirmationContext);
+  assert.equal(restorableConversationContext({
+    awaitingSubmissionReceipt: true,
+    confirmationContext: { url: 'chrome://doubao-chat/', root: { messageId: '55680392056585474' } }
+  }), null);
+  assert.equal(restorableConversationContext({
+    awaitingSubmissionReceipt: true,
+    confirmationContext: { url: 'chrome://doubao-chat/chat/38441970884741634', root: {} }
+  }), null);
 });

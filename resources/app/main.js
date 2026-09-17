@@ -2536,7 +2536,7 @@ function createWindow() {
     recoverCanvasWindow(`render-process-gone:${details?.reason || ""}`);
   });
   win.webContents.session.clearCache().catch(() => {});
-  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260916-r2" } });
+  win.loadFile(path.join(__dirname, "app", "index.html"), { query: { v: "20260917-r3" } });
   win.on("closed", () => {
     win = null;
     closeHiddenBrowserWindows();

@@ -48,3 +48,17 @@ test('explicitly bound manual confirmation links only its own replies', () => {
   });
   assert.deepEqual(result.assistant.map(m => m.messageId), ['receipt', 'video']);
 });
+
+test('Doubao quick action text keeps the receipt in the original task chain', () => {
+  const root = { sender: 'user', messageId: 'root', signature: 'user|id:root', index: 0 };
+  const question = { sender: 'assistant', messageId: 'question', signature: 'assistant|id:question', replyId: 'root', index: 1 };
+  const confirmation = { sender: 'user', messageId: 'confirm', signature: 'user|id:confirm', replyId: '0', index: 2, text: '生成视频' };
+  const receiptMessage = { sender: 'assistant', messageId: 'receipt', signature: 'assistant|id:receipt', replyId: 'confirm', index: 3, text: '本次使用 Seedance 2.0 Fast 生成，预计等待 5 分钟。视频生成好后，我会主动发送给你。' };
+  const result = recovery.confirmationChain({ url: 'same', root }, {
+    url: 'same', messages: [root, question, confirmation, receiptMessage]
+  });
+  assert.equal(result.valid, true);
+  assert.equal(result.interrupted, false);
+  assert.deepEqual(result.users.map(m => m.messageId), ['root', 'confirm']);
+  assert.deepEqual(result.assistant.map(m => m.messageId), ['question', 'receipt']);
+});

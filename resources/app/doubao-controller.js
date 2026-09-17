@@ -258,6 +258,12 @@ async function connectPageById(port, targetId, waitMilliseconds = 8000) {
   return null;
 }
 
+function restorableConversationContext(baseline) {
+  const context=baseline?.confirmationContext||baseline?.submissionContext;
+  if(!context?.root?.messageId||!context.url||!nativeConversationKey(context.url))return null;
+  try{return /^\/chat\/\d+$/.test(new URL(context.url).pathname)?context:null;}catch{return null;}
+}
+
 async function connectRecoveryPage(baseline, identity, allowRestore = true) {
   const context=baseline?.confirmationContext||baseline?.submissionContext;
   if(context&&!hasStableIdentity(context.root)&&baseline.messageState)context.previousMessages||=baseline.messageState.messages||[];
@@ -279,7 +285,7 @@ async function connectRecoveryPage(baseline, identity, allowRestore = true) {
       verified.push(client);client=null;
     }catch(error){assertRunning();rejected.push({targetId:target.id,reason:error.message});}finally{client?.close();}
   }
-  if(verified.length===0&&allowRestore&&!baseline.awaitingSubmissionReceipt&&context?.root?.messageId){
+  if(verified.length===0&&allowRestore&&restorableConversationContext(baseline)){
     try{
       const url=new URL(expectedUrl);
       if(nativeConversationKey(expectedUrl)&&/^\/chat\/\d+$/.test(url.pathname)){
@@ -293,12 +299,10 @@ async function connectRecoveryPage(baseline, identity, allowRestore = true) {
   return verified[0];
 }
 
-// Restore a previously accepted task's view, never a composer or a new task.
+// Restore a task's exact saved conversation for read-only receipt/result checks.
 async function restoreBoundResultView(baseline, identity) {
-  const context=baseline?.confirmationContext||baseline?.submissionContext;
-  if(!context?.root?.messageId||baseline.awaitingSubmissionReceipt)throw new Error('任务尚未建立正式关联，不能跨账号切走');
-  const url=new URL(context.url);
-  if(!nativeConversationKey(context.url)||!/^\/chat\/\d+$/.test(url.pathname))throw new Error('原任务没有可靠的正式对话地址');
+  const context=restorableConversationContext(baseline);
+  if(!context)throw new Error('原任务没有稳定消息关联或可靠的正式对话地址');
   let {client}=await connectBestPage(NATIVE_DOUBAO_PORT,4000);
   try{
     client=await ensureMainChatPage(client,()=>{}, {allowWindowActivation:true});
@@ -3546,6 +3550,7 @@ async function monitorResult({ client, baseline, folder, progress, onResult, onB
 module.exports = {
   restoreBoundResultView,
   connectRecoveryPage,
+  restorableConversationContext,
   resumePendingSubmission,
   CdpClient,
   NATIVE_DOUBAO_PORT,
